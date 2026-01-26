@@ -6,11 +6,11 @@ Agent skills for building with [Tavus](https://tavus.io) - real-time conversatio
 
 ```bash
 # Install all skills
-npx skills add tavus-io/skills
+npx skills add Tavus-Engineering/tavus-skills
 
 # Install specific skills
-npx skills add tavus-io/skills --skill tavus-cvi-quickstart
-npx skills add tavus-io/skills --skill tavus-video-gen
+npx skills add Tavus-Engineering/tavus-skills --skill tavus-cvi-quickstart
+npx skills add Tavus-Engineering/tavus-skills --skill tavus-video-gen
 ```
 
 ## Available Skills
