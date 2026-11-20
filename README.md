@@ -32,7 +32,7 @@ npx skills add Tavus-Engineering/tavus-skills --skill tavus-video-gen
 | **tavus-cvi-quickstart** | Get started with real-time AI video conversations. Stock replicas/personas, first conversation. |
 | **tavus-cvi-persona** | Deep persona configuration. Custom LLMs, TTS engines, perception (Raven), turn-taking (Sparrow). |
 | **tavus-cvi-interactions** | Control conversations in real-time. Echo text, interrupt, inject context, handle events via WebRTC. |
-| **tavus-cvi-ui** | React components for embedding CVI. @tavus/cvi-ui, hooks, Vite/Next.js integration. |
+| **tavus-cvi-ui** | React components for embedding CVI. @tavus/cvi-ui, hooks, Vite/Next.js integration, server route that keeps the API key off the client. |
 | **tavus-cvi-knowledge** | Knowledge base (RAG) and memories. Upload documents, persistent context across conversations. |
 
 ## Quick Links
