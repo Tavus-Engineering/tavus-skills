@@ -1,11 +1,18 @@
 ---
 name: tavus-cvi-ui
-description: Integrate Tavus CVI into React apps using @tavus/cvi-ui components. Use when embedding conversations in web apps, customizing the video UI, using React hooks for CVI events, or building custom conversation interfaces with Vite/Next.js.
+description: Integrate Tavus CVI into React apps using @tavus/cvi-ui components. Use when embedding conversations in web apps, creating conversations from a web app (through a server route that keeps the API key off the client), customizing the video UI, using React hooks for CVI events, or building custom conversation interfaces with Vite/Next.js.
 ---
 
 # Tavus CVI React UI Components
 
 Pre-built React components for embedding CVI conversations.
+
+## Rule: Keep the API Key on the Server
+
+- Never put the Tavus API key in client code or in a client-prefixed env var (`VITE_`, `NEXT_PUBLIC_`, `REACT_APP_`, `EXPO_PUBLIC_`, or similar). Bundlers copy those variables into the JavaScript every visitor downloads, so anyone can read the key.
+- Never call `https://tavusapi.com` or send an `x-api-key` header from browser code.
+- The browser calls the app's own route, `POST /api/tavus`. Only that route reads `TAVUS_API_KEY` (no prefix) and calls the Tavus API. `npx @tavus/cvi-ui@latest add tavus-api` generates it (`add tavus-api-vite-ssr` on Vite).
+- If existing code reads the key in a component or calls `tavusapi.com` from the browser, move that call into the server route.
 
 ## Quick Setup (Vite)
 
@@ -15,13 +22,17 @@ cd my-app
 npm install
 npx @tavus/cvi-ui@latest init
 npx @tavus/cvi-ui@latest add conversation
+npx @tavus/cvi-ui@latest add tavus-api-vite-ssr
 ```
 
 Creates:
 ```
 src/components/cvi/components/
-├── cvi-provider.tsx
-└── conversation.tsx
+├── cvi-provider/
+└── conversation/
+src/components/cvi/lib/
+├── tavus-api-vite-ssr.ts   # server handler: reads TAVUS_API_KEY, calls the Tavus API
+└── tavus-client.ts         # browser client: calls POST /api/tavus
 ```
 
 Create `cvi-components.json` in project root:
@@ -31,14 +42,55 @@ Create `cvi-components.json` in project root:
 }
 ```
 
+On Next.js, Remix or TanStack Start, run `npx @tavus/cvi-ui@latest add tavus-api` instead: it installs the route for your framework (see [Server Route](#server-route)). On plain Vite, `add tavus-api` exits with an error because Vite has no server, so use `add tavus-api-vite-ssr` and mount it as below.
+
+### Mount the Server Route (Vite)
+
+```bash
+npm install hono @hono/node-server
+npm install -D tsx concurrently @types/node
+```
+
+`server.ts` in project root:
+```ts
+import { serve } from "@hono/node-server";
+import { Hono } from "hono";
+import { handleTavusRequest } from "./src/components/cvi/lib/tavus-api-vite-ssr";
+
+const app = new Hono();
+app.post("/api/tavus", (c) => handleTavusRequest(c.req.raw));
+
+serve({ fetch: app.fetch, port: 3001 });
+```
+
+`vite.config.ts`, so the dev server forwards `/api` to it:
+```ts
+import react from "@vitejs/plugin-react";
+import { defineConfig } from "vite";
+
+export default defineConfig({
+  plugins: [react()],
+  server: { proxy: { "/api": "http://localhost:3001" } },
+});
+```
+
+`package.json`, so `npm run dev` starts both:
+```json
+"dev": "concurrently -k -n api,web \"tsx watch --env-file=.env server.ts\" \"vite\""
+```
+
+The handler reads `process.env`, so add `"node"` to `compilerOptions.types` in `tsconfig.app.json` (`"types": ["vite/client", "node"]`), or `npm run build` fails type-checking.
+
 ## Environment Variables
 
 `.env` in project root:
 ```
-VITE_TAVUS_API_KEY=your_api_key
-VITE_REPLICA_ID=rfe12d8b9597
-VITE_PERSONA_ID=pdced222244b
+TAVUS_API_KEY=your_api_key
 ```
+
+- Server-only: no `VITE_` prefix, read only by the server route.
+- Add `.env` to `.gitignore`. The Vite template does not ignore it.
+- Face and PAL IDs are not secrets. Pass them to `createTavusConversation()`, or set them in the server route if callers must not change them.
 
 ## Basic Implementation
 
@@ -46,34 +98,36 @@ VITE_PERSONA_ID=pdced222244b
 import { useState } from "react";
 import { CVIProvider } from "./components/cvi/components/cvi-provider";
 import { Conversation } from "./components/cvi/components/conversation";
+import {
+  createTavusConversation,
+  endTavusConversation,
+} from "./components/cvi/lib/tavus-client";
 
 export default function App() {
-  const [url, setUrl] = useState<string | null>(null);
+  const [call, setCall] = useState<{ id: string; url: string } | null>(null);
 
   const startConversation = async () => {
-    const res = await fetch("https://tavusapi.com/v2/conversations", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": import.meta.env.VITE_TAVUS_API_KEY,
-      },
-      body: JSON.stringify({
-        replica_id: import.meta.env.VITE_REPLICA_ID,
-        persona_id: import.meta.env.VITE_PERSONA_ID,
-      }),
+    // POST /api/tavus on your own server. The API key never reaches the browser.
+    const { conversation_id, conversation_url } = await createTavusConversation({
+      replica_id: "rfe12d8b9597",
+      persona_id: "pdced222244b",
     });
-    const data = await res.json();
-    setUrl(data.conversation_url);
+    setCall({ id: conversation_id, url: conversation_url });
+  };
+
+  const leave = () => {
+    if (call) void endTavusConversation(call.id);
+    setCall(null);
   };
 
   return (
     <CVIProvider>
-      {!url ? (
+      {!call ? (
         <button onClick={startConversation}>Start</button>
       ) : (
         <Conversation 
-          conversationUrl={url} 
-          onLeave={() => setUrl(null)} 
+          conversationUrl={call.url} 
+          onLeave={leave} 
         />
       )}
     </CVIProvider>
@@ -170,35 +224,23 @@ For non-React or quick integration:
 ></iframe>
 ```
 
-## Server-Side API Calls (Recommended)
+## Server Route
 
-Keep API key on server:
+`npx @tavus/cvi-ui@latest add tavus-api` detects the framework and installs a route that keeps the key on the server:
 
-```typescript
-// pages/api/conversation.ts (Next.js)
-export default async function handler(req, res) {
-  const response = await fetch("https://tavusapi.com/v2/conversations", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": process.env.TAVUS_API_KEY,
-    },
-    body: JSON.stringify({
-      replica_id: process.env.REPLICA_ID,
-      persona_id: process.env.PERSONA_ID,
-    }),
-  });
-  
-  const data = await response.json();
-  res.json({ conversation_url: data.conversation_url });
-}
-```
+| Framework | Route file |
+|-----------|------------|
+| Next.js (App Router) | `app/api/tavus/route.ts` |
+| Next.js (Pages Router) | `pages/api/tavus.ts` |
+| Remix | `app/routes/api.tavus.ts` |
+| TanStack Start | `app/routes/api/tavus.ts` |
+| Vite with a server (`add tavus-api-vite-ssr`) | `lib/tavus-api-vite-ssr.ts` exporting `handleTavusRequest`, which you mount at `POST /api/tavus` |
 
-Client calls your API:
-```tsx
-const res = await fetch("/api/conversation", { method: "POST" });
-const { conversation_url } = await res.json();
-```
+Each also installs `lib/tavus-client.ts` with `createTavusConversation(params)` and `endTavusConversation(conversationId)` for the browser.
+
+The route takes `POST /api/tavus` with either `{ "action": "create", "params": { ... } }`, forwarded to `POST https://tavusapi.com/v2/conversations`, or `{ "action": "end", "conversationId": "..." }`. It adds `x-api-key` from `process.env.TAVUS_API_KEY`. If you write the route yourself for another backend, keep that contract and return only what the browser needs (`conversation_id`, `conversation_url`).
+
+Before production: anyone who can reach `/api/tavus` can create conversations on your account. Put your own authentication or rate limiting in front of it, and set values that must not change (such as the PAL ID) in the route instead of trusting `params` from the browser.
 
 ## Styling the Conversation
 
@@ -233,6 +275,6 @@ import { HairCheck } from "./components/cvi/components/haircheck";
 
 ## Example Projects
 
-- [CVI UI Conversation](https://github.com/Tavus-Engineering/tavus-examples/tree/main/cvi-ui-conversation)
-- [CVI UI Haircheck + Conversation](https://github.com/Tavus-Engineering/tavus-examples/tree/main/cvi-ui-haircheck-conversation)
+- [CVI UI Conversation](https://github.com/Tavus-Engineering/tavus-examples/tree/main/examples/cvi-ui-conversation)
+- [CVI UI Haircheck + Conversation](https://github.com/Tavus-Engineering/tavus-examples/tree/main/examples/cvi-ui-haircheck-conversation)
 - [Santa Demo](https://github.com/Tavus-Engineering/santa-template)
